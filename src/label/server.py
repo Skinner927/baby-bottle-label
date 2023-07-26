@@ -8,6 +8,8 @@ from pathlib import Path
 import bottle
 from bottle import post, request
 
+from label.config import DEFAULT, Config
+
 MONTHS = (
     ("January", "Jan"),
     ("February", "Feb"),
@@ -26,7 +28,6 @@ MONTHS = (
 VALID_INTENTS = ("print", "print_qty", "print_date", "print_qty_date")
 
 APP_ID = os.getenv("APP_ID", None)
-BABY_NAME
 
 
 def load_config(config_path: str) -> None:
@@ -140,11 +141,40 @@ def invoke_skill():
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--host", "-b", default="127.0.0.1")
-    parser.add_argument("--port", "-p", default=7788, type=int)
-    parser.add_argument("--debug", action="store_true", default=False)
-    parser.add_argument("--config", help="path to config file")
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("--host", "-b", default=DEFAULT.host)
+    parser.add_argument("--port", "-p", default=DEFAULT.port, type=int)
+    parser.add_argument("--debug", action="store_true", default=DEFAULT.debug)
+    parser.add_argument(
+        "--app-id",
+        action="extend",
+        nargs="+",
+        help="One or more Alexa applicationIds to filter requests by",
+    )
+    parser.add_argument(
+        "--baby-name",
+        help="baby name on label",
+        required=True,
+    )
+    parser.add_argument(
+        "--label-size",
+        required=True,
+        nargs=2,
+        help="Specify the label size width and height in pixels. Multiply "
+        "inches by 300 (for 300 dpi) to get pixels. Should be passed as 2 "
+        "arguments: '100' '200' or '100px' '200px'.",
+    )
+    parser.add_argument(
+        "--rotate",
+        default=DEFAULT.rotate,
+        type=int,
+        help="Degrees to rotate the label counterclockwise. "
+        "Use negative value for clockwise.",
+    )
+
+    parser.add_argument("--config", help="path to config.ini file")
     args = parser.parse_args()
 
     if args.config:
