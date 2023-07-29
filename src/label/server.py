@@ -1,14 +1,20 @@
 import argparse
-import ast
+import dataclasses
 import datetime
+import logging
 import os
 import re
-from pathlib import Path
+import subprocess
+import tempfile
+import threading
+from typing import Any, Dict, Tuple
 
 import bottle
+import PIL.Image
 from bottle import post, request
 
 from label.config import DEFAULT, Config
+from label.generate import generate_image, parse_size
 
 MONTHS = (
     ("January", "Jan"),
@@ -27,26 +33,11 @@ MONTHS = (
 
 VALID_INTENTS = ("print", "print_qty", "print_date", "print_qty_date")
 
-APP_ID = os.getenv("APP_ID", None)
+CONFIG = DEFAULT
+DPI = 300
 
 
-def load_config(config_path: str) -> None:
-    global APP_ID
-    file = Path(config_path)
-    if not file.is_file():
-        raise RuntimeError(f"Configuration not not a file: {config_path}")
-    code = compile(
-        file.read_bytes(),
-        str(file),
-        "exec",
-    )
-    scope = dict()
-    exec(code, scope)
-    if app_id := scope.get("APP_ID", None):
-        APP_ID = app_id
-
-
-def get_safe(dic, *keys):
+def get_safe(dic, *keys) -> Any:
     """Safely traverse through dictionary chains.
 
     :param dict dic:
@@ -63,7 +54,7 @@ def get_safe(dic, *keys):
     return dic
 
 
-def response(msg):
+def response(msg) -> Dict[str, Any]:
     return dict(
         version="1.0",
         response=dict(
@@ -91,22 +82,35 @@ def date_th(num: int) -> str:
 def invoke_skill():
     # TODO: Prob should do verification of app ID since that's unique
     #  Need to get from either env or local conf file?
+    try:
+        return do_skill()
+    except Exception:
+        logging.exception("Unhandled exception")
+        return response("Woah! I died!")
 
+
+def do_skill():
     request_json = request.json
     if not request_json:
         return response("I could not understand your request.")
+    if (
+        CONFIG.alexa_app_id
+        and get_safe(request_json, "session", "application", "applicationId")
+        not in CONFIG.alexa_app_id
+    ):
+        return response("I don't know this application.")
     request_type = get_safe(request_json, "request", "type")
     if request_type == "SessionEndedRequest":
         # Just eat these
         return
     intent = get_safe(request.json, "request", "intent")
     if request_type != "IntentRequest" or not intent:
-        return response("I could not understand your request.")
+        return response("I don't understand your intent.")
     if intent.get("name", None) not in VALID_INTENTS:
-        return response("I could not understand your request.")
+        return response("I don't think you're asking a valid question.")
     slots = intent.get("slots", None)
     if not slots:
-        return response("I could not understand your request.")
+        return response("You're missing some important details.")
 
     quantity_str = get_safe(slots, "quantity", "value") or "1"
     date_str = (
@@ -134,19 +138,71 @@ def invoke_skill():
     else:
         return response("Sorry, I couldn't understand the date to print.")
 
+    return print_label(quantity, month_tuple, day)
+
+
+def print_label(quantity: int, month_tuple: Tuple[str, str], day: str) -> dict:
     labels = "label" if quantity == 1 else "labels"
-    return response(
-        f"Printing {quantity} {labels} for {month_tuple[0]} {day}{date_th(int(day))}"
+    say_request = f"{quantity} {labels} for {month_tuple[0]} {day}{date_th(int(day))}"
+
+    # Generate the label
+    text = [CONFIG.baby_name, f"{month_tuple[1]} {day}"]
+    img = generate_image(
+        "\n".join(text),
+        image_size=parse_size(CONFIG.label_size),
+        dpi=DPI,
+        padding=parse_size("0.2em"),
+        line_padding=parse_size("1.2em"),
+        # TODO: rotate
     )
+    if not img:
+        return response(f"Sorry, I failed to make the {say_request}")
+    ready = threading.Event()
+    try:
+        t = threading.Thread(
+            target=print_thread_main, args=(img, ready, quantity), daemon=False
+        )
+        t.start()
+        try:
+            ready.wait(3.0)
+        except TimeoutError:
+            img.close()
+            img = None
+            return response(f"Sorry, I couldn't print the {say_request}")
+    except BaseException:
+        if img:
+            img.close()
+        raise
+    # Not ours anymore
+    img = None
+
+    return response(f"Printing {say_request}")
+
+
+def print_thread_main(
+    img: PIL.Image.Image, ready: threading.Event, quantity: int
+) -> None:
+    # TODO: quantity
+    with img:
+        with tempfile.NamedTemporaryFile(suffix=".png") as tmp:
+            img.save(fp=tmp)
+            ready.set()
+            # TODO: this
+            try:
+                subprocess.check_call(["bash", "-c", f"echo {tmp.name}"])
+            except Exception:
+                logging.getLogger("label.server.print_thread_main").exception(
+                    "Failed to print label!"
+                )
+                raise
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
-    parser.add_argument("--host", "-b", default=DEFAULT.host)
-    parser.add_argument("--port", "-p", default=DEFAULT.port, type=int)
-    parser.add_argument("--debug", action="store_true", default=DEFAULT.debug)
+    global CONFIG
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", "-b", help=f"Default: {DEFAULT.host}")
+    parser.add_argument("--port", "-p", help=f"Default: {DEFAULT.port}", type=int)
+    parser.add_argument("--debug", action="store_true")
     parser.add_argument(
         "--app-id",
         action="extend",
@@ -156,31 +212,46 @@ def main():
     parser.add_argument(
         "--baby-name",
         help="baby name on label",
-        required=True,
     )
     parser.add_argument(
         "--label-size",
-        required=True,
         nargs=2,
-        help="Specify the label size width and height in pixels. Multiply "
-        "inches by 300 (for 300 dpi) to get pixels. Should be passed as 2 "
-        "arguments: '100' '200' or '100px' '200px'.",
+        help=f"Specify the label size width and height in pixels. Multiply "
+        f"inches by {DPI} (for {DPI} dpi) to get pixels. Should be passed as 2 "
+        f"arguments: '100' '200' or '100px' '200px'.",
     )
     parser.add_argument(
         "--rotate",
-        default=DEFAULT.rotate,
-        type=int,
-        help="Degrees to rotate the label counterclockwise. "
-        "Use negative value for clockwise.",
+        help=f"Degrees to rotate the label counterclockwise. "
+        f"Use negative value for clockwise. Default: {DEFAULT.rotate}",
     )
-
-    parser.add_argument("--config", help="path to config.ini file")
+    parser.add_argument(
+        "--config", help="Path to config.ini file. Defaults to local config.ini."
+    )
     args = parser.parse_args()
 
+    cfg_dict = dataclasses.asdict(DEFAULT)
+    if not args.config and os.path.exists("config.ini"):
+        args.config = "config.ini"
     if args.config:
-        load_config(args.config)
+        cfg_dict.update(dataclasses.asdict(Config.from_ini(args.config)))
+    if args.host is not None:
+        cfg_dict["host"] = args.host
+    if args.port is not None:
+        cfg_dict["port"] = args.port
+    if args.debug is True:
+        cfg_dict["debug"] = True
+    if args.app_id:
+        cfg_dict["alexa_app_id"] = args.app_id
+    if args.baby_name is not None:
+        cfg_dict["baby_name"] = args.baby_name
+    if args.label_size:
+        cfg_dict["label_size"] = args.label_size.join(" ")
+    if args.rotate is not None:
+        cfg_dict["rotate"] = args.rotate
+    CONFIG = cfg = Config(**cfg_dict)
 
-    bottle.run(host=args.host, port=args.port, debug=args.debug, reloader=args.debug)
+    bottle.run(host=cfg.host, port=cfg.port, debug=cfg.debug, reloader=cfg.debug)
 
 
 # do not remove the application assignment (wsgi won't work)
