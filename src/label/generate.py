@@ -57,8 +57,8 @@ def tallest_letter() -> str:
         # (left, top, right, bottom)
         _, _, _, height = font.getbbox(tallest_char)
         for c in string.printable:
-            _, _, _, char_height = font.getsize(c)
-            if char_height[0] >= height[0]:
+            _, _, _, char_height = font.getbbox(c)
+            if char_height >= height:
                 tallest_char = c
                 height = char_height
         _TALLEST_LETTER = tallest_char
@@ -94,7 +94,7 @@ def parse_size(text: str) -> Union[PxSize, EmSize]:
             # 7 14 px
             # 300x400
             # 3px 4px
-            is_em = m[4].lower() == "em"
+            is_em = m[4] and m[4].lower() == "em"
             conv = float if is_em else int
             klass = EmSize if is_em else PxSize
             if m[2] and m[4] != m[2]:
@@ -159,7 +159,7 @@ def padding_to_px(padding: PxSize | EmSize, font_size: int) -> Tuple[int, int]:
     if isinstance(padding, EmSize):
         small_font = load_mono_font(size=font_size)
         # (left, top, right, bottom)
-        _, _, _, height = small_font.bbox(tallest_letter())
+        _, _, _, height = small_font.getbbox(tallest_letter())
         padding_x = int(round((height // 2) * padding.x))
         padding_y = int(round((height // 2) * padding.y))
     else:
@@ -213,7 +213,6 @@ def draw_image(spec: SizedImage) -> Image:
 
         # Center vertically
         line_y_start = padding_y + max(0, int((spec.height - bbox_height) // 2))
-        print(f"line_y_start {line_y_start}")
         # No need to worry about padding because calc_image_overflow_lines did
         # when it calculated the font. So pin center and use anchor="mt" to align.
         line_x_start = spec.width // 2

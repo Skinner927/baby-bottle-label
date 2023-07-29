@@ -4,9 +4,11 @@ import datetime
 import logging
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
+from pathlib import Path
 from typing import Any, Dict, Tuple
 
 import bottle
@@ -93,9 +95,8 @@ def do_skill():
     request_json = request.json
     if not request_json:
         return response("I could not understand your request.")
-    if (
-        CONFIG.alexa_app_id
-        and get_safe(request_json, "session", "application", "applicationId")
+    if CONFIG.alexa_app_id and (
+        get_safe(request_json, "session", "application", "applicationId")
         not in CONFIG.alexa_app_id
     ):
         return response("I don't know this application.")
@@ -146,10 +147,13 @@ def print_label(quantity: int, month_tuple: Tuple[str, str], day: str) -> dict:
     say_request = f"{quantity} {labels} for {month_tuple[0]} {day}{date_th(int(day))}"
 
     # Generate the label
-    text = [CONFIG.baby_name, f"{month_tuple[1]} {day}"]
+    if CONFIG.baby_name:
+        text = [CONFIG.baby_name, f"{month_tuple[1]} {day}"]
+    else:
+        text = [f"{month_tuple[1]} {day}"]
     img = generate_image(
-        "\n".join(text),
-        image_size=parse_size(CONFIG.label_size),
+        ("\n".join(text)).strip(),
+        image_size=parse_size(" ".join(CONFIG.label_size)),
         dpi=DPI,
         padding=parse_size("0.2em"),
         line_padding=parse_size("1.2em"),
@@ -182,19 +186,39 @@ def print_label(quantity: int, month_tuple: Tuple[str, str], day: str) -> dict:
 def print_thread_main(
     img: PIL.Image.Image, ready: threading.Event, quantity: int
 ) -> None:
-    # TODO: quantity
     with img:
+        snap_common = (Path.home() / "snap/lprint/common").resolve()
         with tempfile.NamedTemporaryFile(suffix=".png") as tmp:
-            img.save(fp=tmp)
+            img.save(fp=tmp, format="png")
+            shutil.copy(tmp.name, "/tmp/last.png")
             ready.set()
-            # TODO: this
-            try:
-                subprocess.check_call(["bash", "-c", f"echo {tmp.name}"])
-            except Exception:
-                logging.getLogger("label.server.print_thread_main").exception(
-                    "Failed to print label!"
+
+            args = [
+                "/snap/bin/lprint",
+                "submit",
+                *("-d", CONFIG.printer_name),
+                *("-o", f"media={CONFIG.printer_media}"),
+                *("-o", "print-darkness=100"),
+                *("-n", str(quantity)),
+                str(tmp.name),
+            ]
+            print(f"{args}")
+
+            proc = subprocess.run(
+                args,
+                capture_output=True,
+            )
+            if proc.returncode != 0:
+                log = logging.getLogger("label.server.print_thread_main")
+                log.exception(
+                    "Failed to print label! exit:%d\n  out: %s\n  err: %s",
+                    proc.returncode,
+                    proc.stdout.decode("utf-8"),
+                    proc.stderr.decode("utf-8"),
                 )
-                raise
+            else:
+                print(proc.stdout.decode("utf-8"))
+                print(proc.stderr.decode("utf-8"))
 
 
 def main():
@@ -225,6 +249,8 @@ def main():
         help=f"Degrees to rotate the label counterclockwise. "
         f"Use negative value for clockwise. Default: {DEFAULT.rotate}",
     )
+    parser.add_argument("--printer-name")
+    parser.add_argument("--printer-media", help=f"Default {DEFAULT.printer_media}")
     parser.add_argument(
         "--config", help="Path to config.ini file. Defaults to local config.ini."
     )
@@ -234,7 +260,7 @@ def main():
     if not args.config and os.path.exists("config.ini"):
         args.config = "config.ini"
     if args.config:
-        cfg_dict.update(dataclasses.asdict(Config.from_ini(args.config)))
+        cfg_dict.update(Config.read_ini(args.config))
     if args.host is not None:
         cfg_dict["host"] = args.host
     if args.port is not None:
@@ -249,6 +275,8 @@ def main():
         cfg_dict["label_size"] = args.label_size.join(" ")
     if args.rotate is not None:
         cfg_dict["rotate"] = args.rotate
+    if args.printer_name:
+        cfg_dict["printer_name"] = args.printer_name
     CONFIG = cfg = Config(**cfg_dict)
 
     bottle.run(host=cfg.host, port=cfg.port, debug=cfg.debug, reloader=cfg.debug)

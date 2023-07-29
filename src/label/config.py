@@ -14,6 +14,8 @@ class Config:
     alexa_app_id: List[str]
     label_size: List[str]
     rotate: int
+    printer_name: str
+    printer_media: str
 
     def __post_init__(self) -> None:
         # Ensure debug is bool
@@ -40,7 +42,7 @@ class Config:
         return new_list
 
     @classmethod
-    def from_ini(cls, ini: str) -> Config:
+    def read_ini(cls, ini: str) -> dict:
         parser = configparser.ConfigParser()
         try:
             parser.read(ini)
@@ -55,15 +57,17 @@ class Config:
             config.update(parser[name])
         if not config:
             config.update(parser.defaults())
-        return cls(**config)
+        return config
 
 
 DEFAULT = Config(
-    host="127.0.0.1",
+    host="0.0.0.0",
     port=7788,
     debug=False,
-    baby_name="<forgot baby-name!>",
+    baby_name="",
     alexa_app_id=[],
-    label_size=["300", "100"],
+    label_size=["600", "225"],
     rotate=0,
+    printer_name="dymo450",
+    printer_media="oe_wider-2in-tape_0.75x2in",
 )
