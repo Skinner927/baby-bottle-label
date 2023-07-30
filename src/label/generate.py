@@ -65,7 +65,7 @@ def generate_image(
     width = orig_width - (pad_left * 2)
 
     line_height_em = 1.2
-    line_count = len(text)
+    line_count = len(text) * 2
     per_line_height = height // line_count
 
     im = Image.new(_IMAGE_MODE, (orig_width, orig_height), color=_IMAGE_BG)
