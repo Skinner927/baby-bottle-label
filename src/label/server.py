@@ -250,7 +250,6 @@ def main():
         f"Use negative value for clockwise. Default: {DEFAULT.rotate}",
     )
     parser.add_argument("--printer-name")
-    parser.add_argument("--printer-media", help=f"Default {DEFAULT.printer_media}")
     parser.add_argument(
         "--config", help="Path to config.ini file. Defaults to local config.ini."
     )

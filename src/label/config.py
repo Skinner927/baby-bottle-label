@@ -69,5 +69,4 @@ DEFAULT = Config(
     label_size=["600", "225"],
     rotate=0,
     printer_name="dymo450",
-    printer_media="oe_wider-2in-tape_0.75x2in",
 )
