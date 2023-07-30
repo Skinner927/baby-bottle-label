@@ -8,15 +8,14 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from pathlib import Path
 from typing import Any, Dict, Tuple
 
-import bottle
 import PIL.Image
+import bottle
 from bottle import post, request
 
 from label.config import DEFAULT, Config
-from label.generate import generate_image, parse_size
+from label.generate import generate_image
 
 MONTHS = (
     ("January", "Jan"),
@@ -147,20 +146,18 @@ def print_label(quantity: int, month_tuple: Tuple[str, str], day: str) -> dict:
     say_request = f"{quantity} {labels} for {month_tuple[0]} {day}{date_th(int(day))}"
 
     # Generate the label
+    text = [f"{month_tuple[1]} {day}"]
     if CONFIG.baby_name:
-        text = [CONFIG.baby_name, f"{month_tuple[1]} {day}"]
-    else:
-        text = [f"{month_tuple[1]} {day}"]
+        text.insert(0, CONFIG.baby_name)
+
     img = generate_image(
-        ("\n".join(text)).strip(),
-        image_size=parse_size(" ".join(CONFIG.label_size)),
-        dpi=DPI,
-        padding=parse_size("0.2em"),
-        line_padding=parse_size("1.2em"),
-        # TODO: rotate
+        text=text,
+        image_size=[int(x * DPI) for x in CONFIG.label_size],
+        padding=CONFIG.padding,
     )
     if not img:
         return response(f"Sorry, I failed to make the {say_request}")
+    # img = img.transpose(PIL.Image.ROTATE_90)
     ready = threading.Event()
     try:
         t = threading.Thread(
@@ -187,18 +184,20 @@ def print_thread_main(
     img: PIL.Image.Image, ready: threading.Event, quantity: int
 ) -> None:
     with img:
-        snap_common = (Path.home() / "snap/lprint/common").resolve()
         with tempfile.NamedTemporaryFile(suffix=".png") as tmp:
             img.save(fp=tmp, format="png")
-            shutil.copy(tmp.name, "/tmp/last.png")
+            # For debugging
+            shutil.copy(tmp.name, "/tmp/bottle.png")
             ready.set()
 
+            # notice these are flipped
+            media = f"Custom.{CONFIG.label_size[1]}x{CONFIG.label_size[0]}in"
             args = [
-                "/snap/bin/lprint",
-                "submit",
+                "lp",
                 *("-d", CONFIG.printer_name),
-                *("-o", f"media={CONFIG.printer_media}"),
-                *("-o", "print-darkness=100"),
+                *("-o", f"media={media}"),
+                *("-o", "fit-to-page"),
+                *("-o", "landscape"),
                 *("-n", str(quantity)),
                 str(tmp.name),
             ]
@@ -240,14 +239,13 @@ def main():
     parser.add_argument(
         "--label-size",
         nargs=2,
-        help=f"Specify the label size width and height in pixels. Multiply "
-        f"inches by {DPI} (for {DPI} dpi) to get pixels. Should be passed as 2 "
-        f"arguments: '100' '200' or '100px' '200px'.",
+        help=f"Specify the label width and height in inches. "
+        f"Specify fractions as decimal",
     )
     parser.add_argument(
-        "--rotate",
-        help=f"Degrees to rotate the label counterclockwise. "
-        f"Use negative value for clockwise. Default: {DEFAULT.rotate}",
+        "--padding",
+        nargs=2,
+        help=f"Padding in pixels",
     )
     parser.add_argument("--printer-name")
     parser.add_argument(
@@ -271,12 +269,14 @@ def main():
     if args.baby_name is not None:
         cfg_dict["baby_name"] = args.baby_name
     if args.label_size:
-        cfg_dict["label_size"] = args.label_size.join(" ")
-    if args.rotate is not None:
-        cfg_dict["rotate"] = args.rotate
+        cfg_dict["label_size"] = args.label_size
+    if args.padding:
+        cfg_dict["padding"] = args.padding
     if args.printer_name:
         cfg_dict["printer_name"] = args.printer_name
     CONFIG = cfg = Config(**cfg_dict)
+
+    print(f"Config: {dataclasses.asdict(cfg)}")
 
     bottle.run(host=cfg.host, port=cfg.port, debug=cfg.debug, reloader=cfg.debug)
 

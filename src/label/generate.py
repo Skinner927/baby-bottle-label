@@ -54,7 +54,7 @@ def font_size_for_line(
 
 def generate_image(
     text: List[str],
-    image_size: List[float],
+    image_size: List[int],
     padding: List[int],
 ) -> Image:
     orig_width, orig_height = image_size
@@ -65,6 +65,7 @@ def generate_image(
     width = orig_width - (pad_left * 2)
 
     line_height_em = 1.2
+    # IDK why *2 works but it does
     line_count = len(text) * 2
     per_line_height = height // line_count
 
@@ -97,7 +98,7 @@ def main():
         "-p",
         default=[10, 10],
         nargs=2,
-        type=lambda v: [int(x) for x in v],
+        type=int,
         help="Padding around label in pixels (Default: %(default)s)",
     )
     parser.add_argument(
@@ -105,7 +106,7 @@ def main():
         "-i",
         nargs=2,
         default=[300, 150],
-        type=lambda v: [int(x) for x in v],
+        type=int,
         help="Size in pixels. (Default %(default)s)",
     )
     parser.add_argument("--show", action="store_true")
@@ -118,9 +119,11 @@ def main():
 
     im = generate_image(
         # unescape string https://stackoverflow.com/a/57192592
-        text=args.text.encode("latin-1", "backslashreplace")
-        .decode("unicode-escape")
-        .split("\n"),
+        text=(
+            args.text.encode("latin-1", "backslashreplace")
+            .decode("unicode-escape")
+            .split("\n")
+        ),
         image_size=args.image_size,
         padding=args.padding,
     )

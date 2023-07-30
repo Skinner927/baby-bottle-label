@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import configparser
 import dataclasses
-from typing import List
+from typing import List, TypeVar, Type, Any
+
+T = TypeVar("T")
 
 
 @dataclasses.dataclass
@@ -12,10 +14,9 @@ class Config:
     debug: bool
     baby_name: str
     alexa_app_id: List[str]
-    label_size: List[str]
-    rotate: int
+    label_size: List[float]  # Inches
+    padding: List[int]  # Pixels
     printer_name: str
-    printer_media: str
 
     def __post_init__(self) -> None:
         # Ensure debug is bool
@@ -26,9 +27,21 @@ class Config:
                 self.debug = False
 
         self.alexa_app_id = self._flat_str_list(self.alexa_app_id)
-        self.label_size = self._flat_str_list(self.label_size)
+        self.label_size = self._to_list(self.label_size, float)
+        self.padding = self._to_list(self.padding, int)
         self.port = int(self.port)
-        self.rotate = int(self.rotate)
+
+    @classmethod
+    def _to_list(cls, value: Any, class_: Type[T]) -> List[T]:
+        if value is None:
+            return []
+        elif isinstance(value, str):
+            value = [class_(i) for vs in value.split() for i in vs.split(",")]
+        elif isinstance(value, class_):
+            value = [value]
+        if not isinstance(value, list):
+            raise TypeError("Unexpected type")
+        return [class_(v) for v in value]
 
     @classmethod
     def _flat_str_list(cls, seq) -> List[str]:
@@ -66,7 +79,7 @@ DEFAULT = Config(
     debug=False,
     baby_name="",
     alexa_app_id=[],
-    label_size=["600", "225"],
-    rotate=0,
+    label_size=[2, 0.75],
+    padding=[10, 10],
     printer_name="dymo450",
 )
