@@ -56,35 +56,61 @@ def generate_image(
     text: List[str],
     image_size: List[int],
     padding: List[int],
+    debug: str = "",
 ) -> Image:
     orig_width, orig_height = image_size
 
-    pad_top = padding[0]
-    pad_left = padding[1]
-    height = orig_width - (pad_top * 2)
+    pad_top, pad_left = padding
+    height = orig_height - (pad_top * 2)
     width = orig_width - (pad_left * 2)
 
     line_height_em = 1.2
-    # IDK why *2 works but it does
-    line_count = len(text) * 2
+    line_count = len(text)
     per_line_height = height // line_count
 
     im = Image.new(_IMAGE_MODE, (orig_width, orig_height), color=_IMAGE_BG)
     d = ImageDraw.Draw(im)
+
+    if debug and "padding" in debug:
+        # Draw padding lines
+        d.line(((pad_left, 0), (pad_left, orig_height)))
+        d.line(((0, pad_top), (orig_width, pad_top)))
+
     for i, line in enumerate(text):
         font_size = font_size_for_line(
             line, width=width, height=per_line_height, line_height_em=line_height_em
         )
         font = load_mono_font(size=font_size)
+
+        # Calc top left of text box
+        text_x = pad_left + (width // 2)
+        text_y = pad_top + (per_line_height * i) + (per_line_height // 2)
+
+        if debug:
+            if "box" in debug:
+                # line box
+                tt = pad_top + (per_line_height * i)
+                d.rectangle(
+                    ((pad_left, tt), (orig_width - pad_left, tt + per_line_height))
+                )
+            if "center" in debug:
+                # Center
+                yy = pad_top + (per_line_height * i) + (per_line_height // 2)
+                d.line(((0, yy), (orig_width, yy)))
+
+            zz = pad_top + (per_line_height * i) + (per_line_height // 2)
+            d.line(((0, zz), (orig_width, zz)), fill=127)
+
         d.text(
             (
-                pad_left + (width // 2),
-                pad_top + (per_line_height * i) + (per_line_height // 2),
+                text_x,
+                text_y,
             ),
             line,
             fill=_TEXT_FG,
-            anchor="mm",
             font=font,
+            align="center",
+            anchor="mm",
         )
     return im
 

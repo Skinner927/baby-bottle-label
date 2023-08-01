@@ -132,7 +132,12 @@ def do_skill():
     if m := re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", date_str):
         year, month, day = m.groups()
         try:
-            month_tuple = MONTHS[int(month) - 1]
+            day = int(day)
+        except (ValueError, TypeError):
+            return response("Sorry, I couldn't understand the day specified.")
+        try:
+            month = int(month)
+            month_tuple = MONTHS[month - 1]
         except (IndexError, ValueError, TypeError):
             return response("Sorry, I couldn't understand the month specified.")
     else:
@@ -141,9 +146,9 @@ def do_skill():
     return print_label(quantity, month_tuple, day)
 
 
-def print_label(quantity: int, month_tuple: Tuple[str, str], day: str) -> dict:
+def print_label(quantity: int, month_tuple: Tuple[str, str], day: int) -> dict:
     labels = "label" if quantity == 1 else "labels"
-    say_request = f"{quantity} {labels} for {month_tuple[0]} {day}{date_th(int(day))}"
+    say_request = f"{quantity} {labels} for {month_tuple[0]} {day}{date_th(day)}"
 
     # Generate the label
     text = [f"{month_tuple[1]} {day}"]
